@@ -194,8 +194,18 @@ class MultiDecoder(ContentDecoder):
         they were applied.
     """
 
+    # Maximum allowed number of chained HTTP encodings in the
+    # Content-Encoding header.
+    max_decode_links = 5
+
     def __init__(self, modes: str) -> None:
-        self._decoders = [_get_decoder(m.strip()) for m in modes.split(",")]
+        encodings = [m.strip() for m in modes.split(",")]
+        if len(encodings) > self.max_decode_links:
+            raise DecodeError(
+                "Too many content encodings in the chain: "
+                f"{len(encodings)} > {self.max_decode_links}"
+            )
+        self._decoders = [_get_decoder(e) for e in encodings]
 
     def flush(self) -> bytes:
         return self._decoders[0].flush()
@@ -646,7 +656,11 @@ class HTTPResponse(BaseHTTPResponse):
         Unread data in the HTTPResponse connection blocks the connection from being released back to the pool.
         """
         try:
-            self.read()
+            self.read(
+                # Do not spend resources decoding the content unless
+                # decoding has already been initiated.
+                decode_content=self._has_decoded_content,
+            )
         except (HTTPError, OSError, BaseSSLError, HTTPException):
             pass
 
